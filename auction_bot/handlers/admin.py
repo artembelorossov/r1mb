@@ -9,6 +9,7 @@ from auction_bot.formatters import format_lot_caption
 from auction_bot.keyboards import lot_keyboard
 
 router = Router(name="admin")
+NEW_LOT_FORMAT_HINT = "/new_lot &lt;номер&gt;|&lt;название&gt;|&lt;описание&gt;|&lt;начальная_цена&gt;|[шаг_ставки]"
 
 
 def _ensure_admin(message: Message, app_ctx: AppContext) -> bool:
@@ -60,7 +61,7 @@ async def new_lot_handler(message: Message, app_ctx: AppContext) -> None:
         await message.answer(
             "Отправьте команду с фото.\n"
             "Формат:\n"
-            "/new_lot <номер>|<название>|<описание>|<начальная_цена>|[шаг_ставки]"
+            f"{NEW_LOT_FORMAT_HINT}"
         )
         return
 
@@ -70,7 +71,7 @@ async def new_lot_handler(message: Message, app_ctx: AppContext) -> None:
         await message.answer(
             "Не удалось распарсить лот.\n"
             "Формат:\n"
-            "/new_lot <номер>|<название>|<описание>|<начальная_цена>|[шаг_ставки]\n\n"
+            f"{NEW_LOT_FORMAT_HINT}\n\n"
             f"Ошибка: {error}"
         )
         return
