@@ -205,6 +205,28 @@ async def _finalize_media_group_lot(media_group_id: str, app_ctx: AppContext) ->
     )
 
 
+def _collect_media_group_item(message: Message, app_ctx: AppContext) -> None:
+    if message.photo is None or message.media_group_id is None:
+        return
+
+    media_group_id = message.media_group_id
+    pending = _PENDING_MEDIA_GROUP_LOTS.get(media_group_id)
+    if pending is None:
+        pending = PendingMediaGroupLot()
+        _PENDING_MEDIA_GROUP_LOTS[media_group_id] = pending
+
+    pending.photos_by_message_id[message.message_id] = message.photo[-1].file_id
+
+    caption = (message.caption or "").strip()
+    if caption.startswith("/new_lot"):
+        pending.command_caption = caption
+        pending.command_message = message
+
+    if pending.timer_task is not None and not pending.timer_task.done():
+        pending.timer_task.cancel()
+    pending.timer_task = asyncio.create_task(_finalize_media_group_lot(media_group_id, app_ctx))
+
+
 @router.message(Command("new_lot"))
 async def new_lot_handler(message: Message, app_ctx: AppContext) -> None:
     if not _ensure_admin(message=message, app_ctx=app_ctx):
@@ -212,7 +234,9 @@ async def new_lot_handler(message: Message, app_ctx: AppContext) -> None:
         return
 
     if message.media_group_id is not None:
-        # Альбомы собирает отдельный обработчик media_group.
+        # Первый элемент альбома с /new_lot может быть перехвачен этим хендлером.
+        # Поэтому регистрируем его в буфере здесь, иначе лот не соберется.
+        _collect_media_group_item(message=message, app_ctx=app_ctx)
         return
 
     if message.photo is None:
@@ -250,22 +274,4 @@ async def new_lot_handler(message: Message, app_ctx: AppContext) -> None:
 async def new_lot_media_group_handler(message: Message, app_ctx: AppContext) -> None:
     if not _ensure_admin(message=message, app_ctx=app_ctx):
         return
-    if message.photo is None or message.media_group_id is None:
-        return
-
-    media_group_id = message.media_group_id
-    pending = _PENDING_MEDIA_GROUP_LOTS.get(media_group_id)
-    if pending is None:
-        pending = PendingMediaGroupLot()
-        _PENDING_MEDIA_GROUP_LOTS[media_group_id] = pending
-
-    pending.photos_by_message_id[message.message_id] = message.photo[-1].file_id
-
-    caption = (message.caption or "").strip()
-    if caption.startswith("/new_lot"):
-        pending.command_caption = caption
-        pending.command_message = message
-
-    if pending.timer_task is not None and not pending.timer_task.done():
-        pending.timer_task.cancel()
-    pending.timer_task = asyncio.create_task(_finalize_media_group_lot(media_group_id, app_ctx))
+    _collect_media_group_item(message=message, app_ctx=app_ctx)
