@@ -4,7 +4,6 @@ import asyncio
 from dataclasses import dataclass, field
 
 from aiogram import F, Router
-from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.types import InputMediaPhoto, Message
 
@@ -115,21 +114,29 @@ async def _publish_lot(
             )
             channel_message_id = posted_message.message_id
         else:
-            media: list[InputMediaPhoto] = []
-            for index, file_id in enumerate(photo_file_ids):
-                if index == 0:
-                    media.append(InputMediaPhoto(media=file_id))
-                else:
-                    media.append(InputMediaPhoto(media=file_id))
-
-            posted_messages = await message.bot.send_media_group(
+            # В Telegram у media group кнопки могут не отображаться.
+            # Публикуем первое фото отдельным сообщением с кнопками,
+            # а остальные фото отправляем следующим сообщением(ями).
+            posted_message = await message.bot.send_photo(
                 chat_id=app_ctx.settings.auction_channel_id,
-                media=media,
+                photo=photo_file_ids[0],
+                caption=format_lot_caption(preview_lot),
+                parse_mode="HTML",
+                reply_markup=lot_keyboard(lot=preview_lot, bot_username=app_ctx.bot_username),
             )
-            if not posted_messages:
-                await message.answer("Не удалось получить отправленные сообщения лота.")
-                return
-            channel_message_id = posted_messages[0].message_id
+            channel_message_id = posted_message.message_id
+
+            remaining_photo_ids = photo_file_ids[1:]
+            if len(remaining_photo_ids) == 1:
+                await message.bot.send_photo(
+                    chat_id=app_ctx.settings.auction_channel_id,
+                    photo=remaining_photo_ids[0],
+                )
+            elif len(remaining_photo_ids) > 1:
+                await message.bot.send_media_group(
+                    chat_id=app_ctx.settings.auction_channel_id,
+                    media=[InputMediaPhoto(media=file_id) for file_id in remaining_photo_ids],
+                )
     except Exception as error:  # noqa: BLE001
         await message.answer(f"Не удалось отправить лот в канал: {error}")
         return
@@ -140,30 +147,6 @@ async def _publish_lot(
     if lot is None:
         await message.answer("Лот создан, но не удалось перечитать запись.")
         return
-
-    if len(photo_file_ids) > 1:
-        try:
-            await message.bot.edit_message_caption(
-                chat_id=app_ctx.settings.auction_channel_id,
-                message_id=channel_message_id,
-                caption=format_lot_caption(lot),
-                parse_mode="HTML",
-                reply_markup=lot_keyboard(lot=lot, bot_username=app_ctx.bot_username),
-            )
-        except TelegramBadRequest as error:
-            # Повторная попытка установки тех же данных не должна считаться фатальной.
-            if "message is not modified" not in str(error).lower():
-                await message.answer(
-                    "Лот опубликован как альбом, но не удалось добавить кнопки.\n"
-                    f"Ошибка: {error}"
-                )
-                return
-        except Exception as error:  # noqa: BLE001
-            await message.answer(
-                "Лот опубликован как альбом, но не удалось добавить кнопки.\n"
-                f"Ошибка: {error}"
-            )
-            return
 
     await app_ctx.sheets.export_lot_snapshot(lot)
     await message.answer(
