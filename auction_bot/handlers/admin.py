@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass, field
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.types import InputMediaPhoto, Message
 
@@ -117,13 +118,7 @@ async def _publish_lot(
             media: list[InputMediaPhoto] = []
             for index, file_id in enumerate(photo_file_ids):
                 if index == 0:
-                    media.append(
-                        InputMediaPhoto(
-                            media=file_id,
-                            caption=format_lot_caption(preview_lot),
-                            parse_mode="HTML",
-                        )
-                    )
+                    media.append(InputMediaPhoto(media=file_id))
                 else:
                     media.append(InputMediaPhoto(media=file_id))
 
@@ -148,11 +143,21 @@ async def _publish_lot(
 
     if len(photo_file_ids) > 1:
         try:
-            await message.bot.edit_message_reply_markup(
+            await message.bot.edit_message_caption(
                 chat_id=app_ctx.settings.auction_channel_id,
                 message_id=channel_message_id,
+                caption=format_lot_caption(lot),
+                parse_mode="HTML",
                 reply_markup=lot_keyboard(lot=lot, bot_username=app_ctx.bot_username),
             )
+        except TelegramBadRequest as error:
+            # Повторная попытка установки тех же данных не должна считаться фатальной.
+            if "message is not modified" not in str(error).lower():
+                await message.answer(
+                    "Лот опубликован как альбом, но не удалось добавить кнопки.\n"
+                    f"Ошибка: {error}"
+                )
+                return
         except Exception as error:  # noqa: BLE001
             await message.answer(
                 "Лот опубликован как альбом, но не удалось добавить кнопки.\n"
