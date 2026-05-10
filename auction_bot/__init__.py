@@ -1,2 +1,0 @@
-"""Auction bot package."""
-
