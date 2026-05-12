@@ -255,20 +255,39 @@ class Database:
                 (lot_id, user_id, username, int(lot_row["current_bid"] or 0)),
             )
 
-            previous_place = await (
+            bid_rows = await (
                 await db.execute(
                     """
-                    SELECT user_id, username, amount
+                    SELECT user_id, username, amount, action
                     FROM bids
-                    WHERE lot_id = ? AND action = 'place' AND user_id != ?
+                    WHERE lot_id = ?
                     ORDER BY id DESC
-                    LIMIT 1
                     """,
-                    (lot_id, user_id),
+                    (lot_id,),
                 )
-            ).fetchone()
+            ).fetchall()
 
-            if previous_place is None:
+            # Пересчитываем лидера из всей истории ставок/отмен, чтобы корректно
+            # обрабатывать последовательные отмены разных участников.
+            active_bid_stack: list[tuple[int, str | None, int]] = []
+            for row in reversed(bid_rows):
+                action = str(row["action"])
+                if action == "place":
+                    active_bid_stack.append(
+                        (
+                            int(row["user_id"]),
+                            str(row["username"]) if row["username"] is not None else None,
+                            int(row["amount"]),
+                        )
+                    )
+                elif action == "cancel":
+                    cancelling_user_id = int(row["user_id"])
+                    for index in range(len(active_bid_stack) - 1, -1, -1):
+                        if active_bid_stack[index][0] == cancelling_user_id:
+                            del active_bid_stack[index]
+                            break
+
+            if not active_bid_stack:
                 await db.execute(
                     """
                     UPDATE lots
@@ -280,6 +299,7 @@ class Database:
                     (lot_id,),
                 )
             else:
+                previous_user_id, previous_username, previous_amount = active_bid_stack[-1]
                 await db.execute(
                     """
                     UPDATE lots
@@ -289,9 +309,9 @@ class Database:
                     WHERE id = ?
                     """,
                     (
-                        int(previous_place["amount"]),
-                        int(previous_place["user_id"]),
-                        str(previous_place["username"]) if previous_place["username"] is not None else None,
+                        previous_amount,
+                        previous_user_id,
+                        previous_username,
                         lot_id,
                     ),
                 )
